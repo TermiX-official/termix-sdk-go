@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -22,15 +23,24 @@ func (c *Client) Subscribe(ctx context.Context, onEvent func(Event)) (func(), er
 	if tok == "" {
 		return nil, fmt.Errorf("realtime subscribe requires an authenticated session (no token)")
 	}
-	url := c.baseURL + "/realtime/sse?token=" + tok
+	endpoint, err := url.Parse(c.baseURL + "/realtime/sse")
+	if err != nil {
+		return nil, err
+	}
+	query := endpoint.Query()
+	query.Set("token", tok)
+	endpoint.RawQuery = query.Encode()
+
 	ctx2, cancel := context.WithCancel(ctx)
-	req, err := http.NewRequestWithContext(ctx2, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx2, "GET", endpoint.String(), nil)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 	req.Header.Set("accept", "text/event-stream")
-	resp, err := (&http.Client{}).Do(req) // no timeout — streaming
+	streamClient := *c.http
+	streamClient.Timeout = 0 // keep the configured transport, but do not time out a live stream
+	resp, err := streamClient.Do(req)
 	if err != nil {
 		cancel()
 		return nil, err
